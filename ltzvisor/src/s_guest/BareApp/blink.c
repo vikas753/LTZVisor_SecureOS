@@ -49,12 +49,116 @@
 
 void led_blink( void * pvParameters );
 
+// We will be using performance counters for our test case to measure the time taken by
+// branch instruction
+void enablePerfCounters()
+{
+    printk(" Enable performance counters ! \n\t");
+
+// Comment it out for now as we are using global timers !	
+#if 0
+	// in general enable all counters (including cycle counter)
+    int32_t value = 0x0;
+
+    // program the performance-counter control-register:
+    asm volatile ("MCR p15, 0, %0, c9, c12, 0 ;" :: "r"(value));
+#endif
+
+}
+
+// Below parameters are for characterizing the test case
+#define TEST_NUM              1
+#define RANDOM_NUM_GEN_FACTOR 2
+#define NUM_TEST_CASES        20
+
+/* Cache line under test for branch prediction */
+int cacheLine = TEST_NUM;
+
+/* Devise a basic api to flush an address out of cache . 
+   for a kernel this wont exist so do try for  !! Need to verify it !! */
+static inline void flush(int addr)
+ {
+     asm volatile("mcr p15, 0, %0, c7, c6, 1"::"r"(addr));                                              
+ } 
+
+// Read the value from an address ( mere dereference of a pointer , would be optimized later ) 
+static inline unsigned int read_val(int addr)
+{
+	int* addrPtr = (int*)addr;
+    unsigned int addrVal = *addrPtr;	
+    return addrVal;	
+}
+
+// Basic prototype of the global timer located an offset as below whose value be returned and used for
+// performance monitoring purpose
+static inline unsigned int get_cyclecount (int periphBaseAddr)
+{
+	#define GLOBAL_TIMER_OFS 0x200
+    return read_val(periphBaseAddr + GLOBAL_TIMER_OFS);
+}
+
+
+// Get peripheral base address of private memory region where the global counter resides
+static inline unsigned int get_periphBaseAddr (void)
+{
+    unsigned int baseAddr;
+    // Read Base address register
+    asm volatile ("MRC p15, 4, %0, c15, c0, 0 \t\n": "=r"(baseAddr));
+	printk(" Periph base addr is 0x%x" , baseAddr);
+    return baseAddr; 
+}
+
+// test case to verify or reverse the branch prediction algo in Secure World 
+void branchPredictorTestCase()
+{
+	enablePerfCounters();
+	
+    int baseAddrPvtmem = get_periphBaseAddr();
+
+    printk( " Start ! - Branch predictor experiment on Secure OS  ! \n\t " );
+
+    int decisionMaker = 0;
+	int i = NUM_TEST_CASES;
+	
+	while(i)
+	{
+	  if((decisionMaker % RANDOM_NUM_GEN_FACTOR) == 0)
+	  {	
+        printk(" Flush the cache line \n\t");
+	    flush((int)&cacheLine);
+	  }
+	  else
+	  {
+	    printk(" No Flush of cache line \n\t");  
+	  }
+	  
+	  decisionMaker++;
+	  
+	  int timerCount = get_cyclecount(baseAddrPvtmem);
+	  int timerCountPostIf = 0;
+	
+   	  if(cacheLine == TEST_NUM)
+	  {
+	    timerCountPostIf = get_cyclecount(baseAddrPvtmem);  
+      }
+	  
+	  int delta = timerCountPostIf - timerCount;
+	  printk(" Time delta is : 0x%x , timercount : 0x%x , timercountpostif : 0x%x \n\t " , delta , timerCount , timerCountPostIf );
+      
+	  i--;	  
+	}	  
+	
+	printk( " End   ! - Branch predictor experiment on Secure OS  .. \n\t");
+}
+
 int main() {
 
 	/** Initialize hardware */
 	hw_init();
 
 	printk(" * Secure bare metal VM: running ... \n\t");
+    
+    branchPredictorTestCase();
 
 	/** Generate tick every 1s */
 	tick_set(1000000);
